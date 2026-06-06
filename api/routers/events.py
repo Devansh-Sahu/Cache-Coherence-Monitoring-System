@@ -23,10 +23,40 @@ from api.services.rag import StalenessRAGService
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/events", tags=["events"])
 
-_history = StalenessHistoryService()
-_registry = RegistryService()
-_rag = StalenessRAGService()
-_llm = LLMService()
+# ── Lazy service accessors (instantiated on first request, not at import time) ──
+_history_svc: StalenessHistoryService | None = None
+_registry_svc: RegistryService | None = None
+_rag_svc: StalenessRAGService | None = None
+_llm_svc: LLMService | None = None
+
+
+def _history() -> StalenessHistoryService:
+    global _history_svc
+    if _history_svc is None:
+        _history_svc = StalenessHistoryService()
+    return _history_svc
+
+
+def _registry() -> RegistryService:
+    global _registry_svc
+    if _registry_svc is None:
+        _registry_svc = RegistryService()
+    return _registry_svc
+
+
+def _rag() -> StalenessRAGService:
+    global _rag_svc
+    if _rag_svc is None:
+        _rag_svc = StalenessRAGService()
+    return _rag_svc
+
+
+def _llm() -> LLMService:
+    global _llm_svc
+    if _llm_svc is None:
+        _llm_svc = LLMService()
+    return _llm_svc
+
 
 
 @router.post("/", response_model=StalenessEvent, status_code=status.HTTP_201_CREATED)
@@ -39,7 +69,7 @@ async def ingest_event(body: StalenessEventCreate) -> dict[str, Any]:
     event = StalenessEvent(**body.model_dump())
 
     # Enrich with registry metadata if available
-    reg_entry = _registry.get(event.key_name)
+    reg_entry = _registry().get(event.key_name)
     if reg_entry and not event.owning_service:
         event.owning_service = reg_entry.get("owning_service")
 
@@ -47,7 +77,7 @@ async def ingest_event(body: StalenessEventCreate) -> dict[str, Any]:
         **event.model_dump(),
         "timestamp": event.timestamp.isoformat(),
     }
-    _history.put_event(item)
+    _history().put_event(item)
     logger.info(
         "Ingested staleness event",
         key_name=event.key_name,
@@ -58,7 +88,7 @@ async def ingest_event(body: StalenessEventCreate) -> dict[str, Any]:
     # Phase 7: Embed breach events into PGVector (best-effort, don't block response)
     if event.is_breaching:
         try:
-            _rag.embed_event(item)
+            _rag().embed_event(item)
         except Exception as exc:
             logger.warning(
                 "RAG embed failed (non-critical)", error=str(exc)
@@ -73,7 +103,7 @@ async def get_event_history(
     hours: int = Query(default=24, ge=1, le=720),
 ) -> dict[str, Any]:
     """Get staleness history for a key over the last N hours."""
-    events_raw = _history.get_events(key_name, hours=hours)
+    events_raw = _history().get_events(key_name, hours=hours)
 
     if not events_raw:
         return {
@@ -115,7 +145,7 @@ async def explain_breach(key_name: str) -> dict[str, Any]:
     and ask Claude Haiku to explain the likely cause.
     """
     # Get most recent breach event
-    recent = _history.get_events(key_name, hours=168)  # last 7 days
+    recent = _history().get_events(key_name, hours=168)  # last 7 days
     breach_events = [
         e for e in recent if e.get("staleness_ms", 0) > e.get("threshold_ms", 0)
     ]
@@ -132,7 +162,7 @@ async def explain_breach(key_name: str) -> dict[str, Any]:
     })
 
     # Retrieve similar past incidents from PGVector
-    similar = _rag.retrieve_similar(current_event_raw, top_k=5)
+    similar = _rag().retrieve_similar(current_event_raw, top_k=5)
     similar_count = len(similar)
     similar_text = "\n".join(
         f"- [{s['key_name']} @ {s.get('timestamp', 'unknown')}]: {s['content']}"
@@ -167,7 +197,7 @@ async def explain_breach(key_name: str) -> dict[str, Any]:
         "Provide: 1) root cause hypothesis, 2) suggested fix."
     )
 
-    explanation = await _llm.complete(system=system_prompt, user=user_message)
+    explanation = await _llm().complete(system=system_prompt, user=user_message)
     if not explanation:
         explanation = (
             f"LLM unavailable. Key '{key_name}' is {current_event.staleness_ms}ms stale "

@@ -9,16 +9,24 @@ import { RefreshCw, Radio, AlertCircle } from 'lucide-react';
 
 const POLL_INTERVAL_MS = 30_000;
 
-function StatCard({ label, value, color, prefix = '' }) {
+const COLOR_MAP = {
+  purple: '#818cf8',
+  green: '#10b981',
+  yellow: '#f59e0b',
+  red: '#ef4444',
+};
+
+function StatCard({ label, value, color, accent }) {
   return (
     <div className="stat-card" style={{ '--accent-gradient': color }}>
       <div className="stat-label">{label}</div>
-      <div className="stat-value" style={{ color: color?.split(',')[1]?.trim() || 'var(--text-primary)' }}>
-        {prefix}{value ?? '—'}
+      <div className="stat-value" style={{ color: accent || 'var(--text-primary)' }}>
+        {value ?? '—'}
       </div>
     </div>
   );
 }
+
 
 export default function App() {
   const [data, setData] = useState(null);
@@ -125,21 +133,25 @@ export default function App() {
             label="Total Keys"
             value={loading ? '…' : data?.total_keys ?? 0}
             color="linear-gradient(90deg, #6366f1, #8b5cf6)"
+            accent="#818cf8"
           />
           <StatCard
             label="Healthy"
             value={loading ? '…' : data?.healthy_keys ?? 0}
             color="linear-gradient(90deg, #10b981, #34d399)"
+            accent="#10b981"
           />
           <StatCard
             label="Warning"
             value={loading ? '…' : data?.warning_keys ?? 0}
             color="linear-gradient(90deg, #f59e0b, #fbbf24)"
+            accent="#f59e0b"
           />
           <StatCard
             label="Critical"
             value={loading ? '…' : data?.critical_keys ?? 0}
             color="linear-gradient(90deg, #ef4444, #f87171)"
+            accent="#ef4444"
           />
         </div>
 

@@ -41,6 +41,11 @@ def _embed(text_: str) -> list[float]:
     return enc.encode(text_, normalize_embeddings=True).tolist()
 
 
+def _to_pgvector(embedding: list[float]) -> str:
+    """Format a float list as a pgvector-compatible literal '[x,y,z,...]'."""
+    return '[' + ','.join(f'{v:.8f}' for v in embedding) + ']'
+
+
 def _get_engine() -> Engine:
     return create_engine(get_settings().database_url, pool_pre_ping=True)
 
@@ -96,7 +101,7 @@ class StalenessRAGService:
                     "id": doc_id,
                     "key_name": key_name,
                     "content": doc,
-                    "embedding": str(embedding),
+                    "embedding": _to_pgvector(embedding),
                     "metadata": meta,
                 },
             )
@@ -134,7 +139,7 @@ class StalenessRAGService:
                     """
                 ),
                 {
-                    "embedding": str(embedding),
+                    "embedding": _to_pgvector(embedding),
                     "exclude_key": key_name,
                     "top_k": top_k,
                 },
@@ -197,7 +202,7 @@ class RunbookRAGService:
                         "name": runbook_name,
                         "idx": idx,
                         "content": chunk,
-                        "emb": str(embedding),
+                        "emb": _to_pgvector(embedding),
                         "meta": meta,
                     },
                 )
@@ -221,7 +226,7 @@ class RunbookRAGService:
                     LIMIT :top_k
                     """
                 ),
-                {"embedding": str(embedding), "top_k": top_k},
+                {"embedding": _to_pgvector(embedding), "top_k": top_k},
             ).fetchall()
 
         return [

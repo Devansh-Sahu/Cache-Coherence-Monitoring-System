@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { fetchExplain, fetchEvents } from '../api';
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
@@ -59,7 +59,7 @@ export default function KeyDetailPanel({ keyData, onClose }) {
   }, [keyData.key_name, history]);
 
   // Load history when panel opens
-  useState(() => { loadHistory(); });
+  useEffect(() => { loadHistory(); }, [loadHistory]);
 
   const handleExplain = async () => {
     setExplaining(true);
