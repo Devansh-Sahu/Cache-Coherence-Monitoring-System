@@ -31,10 +31,10 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://csm_user:csm_password@localhost:5432/csm_db"
     pgvector_embedding_dim: int = 384  # all-MiniLM-L6-v2
 
-    # ── Anthropic ─────────────────────────────────────────────────────────────
-    anthropic_api_key: str = ""
-    anthropic_model: str = "claude-haiku-4-5"
-    anthropic_max_tokens: int = 300
+    # ── Groq LLM ──────────────────────────────────────────────────────────────
+    groq_api_key: str = ""
+    groq_model: str = "llama-3.3-70b-versatile"   # fast + powerful, free tier
+    groq_max_tokens: int = 500
 
     # ── Slack ──────────────────────────────────────────────────────────────────
     slack_webhook_url: str = ""
@@ -62,13 +62,13 @@ class Settings(BaseSettings):
     sla_breach_multiplier: float = 1.5
     auto_tag_value_max_chars: int = 200
 
-    @field_validator("anthropic_api_key")
+    @field_validator("groq_api_key")
     @classmethod
     def warn_missing_api_key(cls, v: str) -> str:
         if not v:
             import warnings
             warnings.warn(
-                "ANTHROPIC_API_KEY not set — LLM calls will use mock responses",
+                "GROQ_API_KEY not set — LLM calls will return mock responses",
                 stacklevel=2,
             )
         return v

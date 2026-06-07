@@ -4,14 +4,14 @@ Triggered by CloudWatch Events every 60 seconds.
 
 Workflow:
 1. Fetch all keys where staleness > SLA * breach_multiplier
-2. For each violating key, call Claude Haiku for a one-sentence summary
+2. For each violating key, call Groq LLM for a one-sentence summary
 3. Retrieve relevant runbook section from PGVector (via shared DB)
 4. Post to Slack: key, staleness, LLM summary, runbook excerpt
 5. Graceful degradation: if LLM fails, send raw metrics to Slack
 
 IAM requirements:
   - dynamodb:Scan, dynamodb:Query on StalenessHistory + CacheKeyRegistry
-  - secretsmanager:GetSecretValue (for ANTHROPIC_API_KEY)
+  - secretsmanager:GetSecretValue (for GROQ_API_KEY)
   - cloudwatch:PutMetricData
 """
 
@@ -24,38 +24,41 @@ import time
 from decimal import Decimal
 from typing import Any, Optional
 
-import anthropic
 import boto3
+from groq import Groq
 from slack_sdk.webhook import WebhookClient
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 # ── Environment ───────────────────────────────────────────────────────────────
-REGISTRY_TABLE = os.environ.get("DYNAMODB_REGISTRY_TABLE", "CacheKeyRegistry")
-HISTORY_TABLE = os.environ.get("DYNAMODB_HISTORY_TABLE", "StalenessHistory")
-SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
+REGISTRY_TABLE  = os.environ.get("DYNAMODB_REGISTRY_TABLE", "CacheKeyRegistry")
+HISTORY_TABLE   = os.environ.get("DYNAMODB_HISTORY_TABLE", "StalenessHistory")
+SLACK_WEBHOOK_URL = os.environ.get(
+    "SLACK_WEBHOOK_URL",
+    "",  # Set via AWS Lambda env var or .env
+)
 BREACH_MULTIPLIER = float(os.environ.get("SLA_BREACH_MULTIPLIER", "1.5"))
-ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5")
-MAX_TOKENS = int(os.environ.get("ANTHROPIC_MAX_TOKENS", "300"))
-AWS_REGION = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
-USE_LOCALSTACK = os.environ.get("USE_LOCALSTACK", "false").lower() == "true"
-AWS_ENDPOINT = os.environ.get("AWS_ENDPOINT_URL", "http://localhost:4566")
-NAMESPACE = "CacheStalenessMonitor"
+GROQ_MODEL      = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+MAX_TOKENS      = int(os.environ.get("GROQ_MAX_TOKENS", "300"))
+AWS_REGION      = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+USE_LOCALSTACK  = os.environ.get("USE_LOCALSTACK", "false").lower() == "true"
+AWS_ENDPOINT    = os.environ.get("AWS_ENDPOINT_URL", "http://localhost:4566")
+NAMESPACE       = "CacheStalenessMonitor"
 
 
-def _get_anthropic_key() -> str:
-    """Fetch API key from env or Secrets Manager."""
-    key = os.environ.get("ANTHROPIC_API_KEY", "")
+def _get_groq_key() -> str:
+    """Fetch Groq API key from env or Secrets Manager."""
+    key = os.environ.get("GROQ_API_KEY", "")
     if key:
         return key
     # Try Secrets Manager
     try:
-        client = boto3.client("secretsmanager", region_name=AWS_REGION)
-        resp = client.get_secret_value(SecretId="csm/anthropic-api-key")
+        sm = boto3.client("secretsmanager", region_name=AWS_REGION)
+        resp = sm.get_secret_value(SecretId="csm/groq-api-key")
         return resp.get("SecretString", "")
     except Exception as exc:
-        logger.warning("Could not fetch API key from Secrets Manager: %s", exc)
+        logger.warning("Could not fetch Groq key from Secrets Manager: %s", exc)
         return ""
 
 
@@ -129,12 +132,12 @@ def _get_recent_events(dynamo: Any, key_name: str, limit: int = 5) -> list[dict[
 
 
 def _llm_summarize(
-    client: anthropic.Anthropic,
+    client: Groq,
     item: dict[str, Any],
     recent_events: list[dict[str, Any]],
-    prompt: str,
+    system_prompt: str,
 ) -> Optional[str]:
-    """Call Claude Haiku for a one-sentence alert summary."""
+    """Call Groq LLM for a one-sentence alert summary."""
     user_msg = (
         f"The following cache key is violating SLA:\n"
         f"Key: {item['key_name']} | Service: {item.get('owning_service', 'unknown')}\n"
@@ -145,13 +148,16 @@ def _llm_summarize(
         "Write ONE sentence: root cause hypothesis + suggested fix."
     )
     try:
-        msg = client.messages.create(
-            model=ANTHROPIC_MODEL,
+        response = client.chat.completions.create(
+            model=GROQ_MODEL,
             max_tokens=MAX_TOKENS,
-            system=prompt,
-            messages=[{"role": "user", "content": user_msg}],
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_msg},
+            ],
+            temperature=0.3,
         )
-        return msg.content[0].text if msg.content else None
+        return response.choices[0].message.content if response.choices else None
     except Exception as exc:
         logger.warning("LLM call failed: %s", exc)
         return None
@@ -163,15 +169,15 @@ def _post_slack(
     summary: Optional[str],
     runbook_excerpt: Optional[str],
 ) -> bool:
-    """Post alert to Slack. Returns True on success."""
-    key_name = item["key_name"]
-    service = item.get("owning_service", "unknown")
+    """Post rich Slack alert block. Returns True on success."""
+    key_name    = item["key_name"]
+    service     = item.get("owning_service", "unknown")
     staleness_ms = item.get("staleness_ms", 0)
     threshold_ms = item.get("threshold_ms", 0)
-    breach_pct = item.get("breach_pct", 0)
+    breach_pct   = item.get("breach_pct", 0)
 
     status_emoji = "🔴" if breach_pct > 100 else "🟡"
-    llm_text = summary or f"Staleness: {staleness_ms}ms exceeds SLA of {threshold_ms}ms."
+    llm_text     = summary or f"Staleness: {staleness_ms}ms exceeds SLA of {threshold_ms}ms."
     runbook_text = f"\n📖 *Runbook:* {runbook_excerpt[:300]}..." if runbook_excerpt else ""
 
     blocks = [
@@ -190,20 +196,29 @@ def _post_slack(
         },
         {
             "type": "section",
-            "text": {"type": "mrkdwn", "text": f"*Analysis:* {llm_text}{runbook_text}"},
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*🤖 Groq Analysis:* {llm_text}{runbook_text}",
+            },
         },
         {
             "type": "context",
             "elements": [
-                {"type": "mrkdwn", "text": f"Alert generated at {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}"}
+                {
+                    "type": "mrkdwn",
+                    "text": f"Generated by Groq `{GROQ_MODEL}` | {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}",
+                }
             ],
         },
     ]
 
     try:
-        client = WebhookClient(webhook_url)
-        resp = client.send(blocks=blocks)
-        return resp.status_code == 200
+        slack = WebhookClient(webhook_url)
+        resp = slack.send(blocks=blocks)
+        success = resp.status_code == 200
+        if not success:
+            logger.error("Slack returned non-200: %s %s", resp.status_code, resp.body)
+        return success
     except Exception as exc:
         logger.error("Slack post failed: %s", exc)
         return False
@@ -240,17 +255,17 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     logger.info("Staleness alerter invoked")
 
     # Load prompt
-    prompt_text = "You are a Redis SRE on-call assistant. Respond in one concise sentence."
+    system_prompt = "You are a Redis SRE on-call assistant. Respond in one concise sentence."
     try:
         with open("prompts/alert_summary.txt", encoding="utf-8") as f:
-            prompt_text = f.read().strip()
+            system_prompt = f.read().strip()
     except FileNotFoundError:
         pass
 
-    api_key = _get_anthropic_key()
-    anthropic_client: Optional[anthropic.Anthropic] = None
-    if api_key:
-        anthropic_client = anthropic.Anthropic(api_key=api_key)
+    groq_key = _get_groq_key()
+    groq_client: Optional[Groq] = None
+    if groq_key:
+        groq_client = Groq(api_key=groq_key)
 
     dynamo = _dynamodb_client()
     cw_kwargs: dict[str, Any] = {"region_name": AWS_REGION}
@@ -264,18 +279,19 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     alerts_sent = 0
     for item in violating:
         key_name = item["key_name"]
-        recent = _get_recent_events(dynamo, key_name)
-        summary = None
-        if anthropic_client:
-            summary = _llm_summarize(anthropic_client, item, recent, prompt_text)
+        recent   = _get_recent_events(dynamo, key_name)
 
-        # Slack
+        summary = None
+        if groq_client:
+            summary = _llm_summarize(groq_client, item, recent, system_prompt)
+
+        # Slack alert
         if SLACK_WEBHOOK_URL:
             delivered = _post_slack(SLACK_WEBHOOK_URL, item, summary, runbook_excerpt=None)
             if delivered:
                 alerts_sent += 1
 
-        # CloudWatch
+        # CloudWatch metrics
         _put_cloudwatch_metric(
             cloudwatch,
             key_name,

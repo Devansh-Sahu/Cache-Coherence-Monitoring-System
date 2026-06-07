@@ -86,14 +86,14 @@ resource "aws_sqs_queue" "alerts" {
 }
 
 # ─── Secrets Manager: Anthropic API key ───────────────────────────────────────
-resource "aws_secretsmanager_secret" "anthropic_key" {
-  name = "csm/anthropic-api-key"
+resource "aws_secretsmanager_secret" "groq_key" {
+  name = "csm/groq-api-key"
   tags = { Project = "csm" }
 }
 
-resource "aws_secretsmanager_secret_version" "anthropic_key_version" {
-  secret_id     = aws_secretsmanager_secret.anthropic_key.id
-  secret_string = "placeholder-update-via-console-or-cli"
+resource "aws_secretsmanager_secret_version" "groq_key_version" {
+  secret_id     = aws_secretsmanager_secret.groq_key.id
+  secret_string = "REPLACE_WITH_GROQ_API_KEY"
 }
 
 # ─── IAM: Lambda execution role ───────────────────────────────────────────────
@@ -132,7 +132,7 @@ resource "aws_iam_role_policy" "lambda_policy" {
       {
         Effect   = "Allow"
         Action   = ["secretsmanager:GetSecretValue"]
-        Resource = aws_secretsmanager_secret.anthropic_key.arn
+        Resource = aws_secretsmanager_secret.groq_key.arn
       },
       {
         Effect   = "Allow"
@@ -168,8 +168,9 @@ resource "aws_lambda_function" "staleness_alerter" {
       DYNAMODB_REGISTRY_TABLE = var.registry_table_name
       DYNAMODB_HISTORY_TABLE  = var.history_table_name
       SLA_BREACH_MULTIPLIER   = "1.5"
-      ANTHROPIC_MODEL         = "claude-haiku-4-5"
-      ANTHROPIC_MAX_TOKENS    = "300"
+      GROQ_MODEL              = "llama-3.3-70b-versatile"
+      GROQ_MAX_TOKENS         = "300"
+      SLACK_WEBHOOK_URL       = "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
       USE_LOCALSTACK          = tostring(var.use_localstack)
       AWS_ENDPOINT_URL        = var.use_localstack ? var.aws_endpoint_url : ""
       AWS_DEFAULT_REGION      = var.aws_region
