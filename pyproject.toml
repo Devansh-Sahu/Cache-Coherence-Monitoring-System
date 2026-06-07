@@ -60,4 +60,4 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "-v --cov=api --cov=workers --cov-report=term-missing"
+addopts = "-v"

@@ -21,14 +21,14 @@ os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "testing")
 os.environ.setdefault("DYNAMODB_REGISTRY_TABLE", "CacheKeyRegistry")
 os.environ.setdefault("DYNAMODB_HISTORY_TABLE", "StalenessHistory")
 os.environ.setdefault("DATABASE_URL", "")
-os.environ.setdefault("ANTHROPIC_API_KEY", "")
+os.environ.setdefault("GROQ_API_KEY", "")
 
 
 @mock_aws
 class TestEventIngestCycle:
     """Full event ingest → DynamoDB → retrieve integration test."""
 
-    def setup_method(self) -> None:
+    def setup_method(self, method=None) -> None:
         """Create DynamoDB tables before each test."""
         from api.services.dynamodb import ensure_tables_exist
 
