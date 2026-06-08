@@ -69,21 +69,22 @@ def setup_sqs() -> None:
         logger.info("SQS DLQ already exists")
 
 
-def setup_secretsmanager(anthropic_key: str = "") -> None:
+def setup_secretsmanager(groq_key: str = "") -> None:
     sm = _client("secretsmanager")
+    secret_name = "csm/groq-api-key"
     try:
         sm.create_secret(  # type: ignore[union-attr]
-            Name="csm/anthropic-api-key",
-            SecretString=anthropic_key or "placeholder-replace-me",
+            Name=secret_name,
+            SecretString=groq_key or "placeholder-replace-me",
         )
-        logger.info("Created Secrets Manager secret")
+        logger.info("Created Secrets Manager secret", name=secret_name)
     except ClientError as e:
         if "ResourceExistsException" in str(e):
-            if anthropic_key:
+            if groq_key:
                 sm.update_secret(  # type: ignore[union-attr]
-                    SecretId="csm/anthropic-api-key", SecretString=anthropic_key
+                    SecretId=secret_name, SecretString=groq_key
                 )
-                logger.info("Updated Secrets Manager secret with API key")
+                logger.info("Updated Secrets Manager secret with Groq API key")
             else:
                 logger.info("Secrets Manager secret already exists")
         else:
@@ -130,9 +131,10 @@ def setup_cloudwatch_dashboard() -> None:
 
 def main() -> None:
     logger.info("Setting up LocalStack resources...")
+    settings = get_settings()
     setup_s3()
     setup_sqs()
-    setup_secretsmanager()
+    setup_secretsmanager(groq_key=settings.groq_api_key)
     setup_cloudwatch_dashboard()
     logger.info("LocalStack setup complete")
 
