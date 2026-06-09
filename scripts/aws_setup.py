@@ -102,6 +102,10 @@ def setup_dynamodb() -> None:
             }],
             Tags=[{"Key": "Project", "Value": "csm"}],
         )
+        # Wait for ACTIVE
+        dynamo_client = db.meta.client
+        waiter = dynamo_client.get_waiter("table_exists")
+        waiter.wait(TableName=REGISTRY_TABLE, WaiterConfig={"Delay": 5, "MaxAttempts": 12})
         print(f"  {OK}  Created {REGISTRY_TABLE}")
     else:
         print(f"  {SKIP} {REGISTRY_TABLE} already exists")
@@ -130,6 +134,10 @@ def setup_dynamodb() -> None:
             }],
             Tags=[{"Key": "Project", "Value": "csm"}],
         )
+        # Wait for table to become ACTIVE before enabling TTL
+        print(f"      Waiting for {HISTORY_TABLE} to become ACTIVE...")
+        waiter = table.meta.client.get_waiter("table_exists")
+        waiter.wait(TableName=HISTORY_TABLE, WaiterConfig={"Delay": 5, "MaxAttempts": 12})
         # Enable TTL
         table.meta.client.update_time_to_live(
             TableName=HISTORY_TABLE,
@@ -347,7 +355,6 @@ def setup_lambda(role_arn: str) -> str:
         "GROQ_MAX_TOKENS":         "300",
         "SLACK_WEBHOOK_URL":       SLACK_URL,
         "USE_LOCALSTACK":          "false",
-        "AWS_DEFAULT_REGION":      REGION,
     }
 
     try:
